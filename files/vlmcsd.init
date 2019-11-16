@@ -122,6 +122,7 @@ start_service() {
     op_port=${op_port:-1688}
     [ "$hostname.$domain" = "$target" -a "$port" = "$op_port" ] && return 0
 
+    uci -q set dhcp.vlmcsd='srvhost'
     uci -q set dhcp.vlmcsd.srv="_vlmcs._tcp.$domain"
     uci -q set dhcp.vlmcsd.target="$hostname.$domain"
     uci -q set dhcp.vlmcsd.port="$op_port"
