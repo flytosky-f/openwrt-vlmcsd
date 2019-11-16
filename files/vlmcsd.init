@@ -122,10 +122,13 @@ start_service() {
     op_port=${op_port:-1688}
     [ "$hostname.$domain" = "$target" -a "$port" = "$op_port" ] && return 0
 
-    uci -q set dhcp.vlmcsd.srv="_vlmcs._tcp.$domain"
-    uci -q set dhcp.vlmcsd.target="$hostname.$domain"
-    uci -q set dhcp.vlmcsd.port="$op_port"
-    uci -q commit dhcp
+    uci -q batch <<EOF
+        set dhcp.vlmcsd='srvhost'
+        set dhcp.vlmcsd.srv="_vlmcs._tcp.$domain"
+        set dhcp.vlmcsd.target="$hostname.$domain"
+        set dhcp.vlmcsd.port="$op_port"
+        commit dhcp
+EOF
     /etc/init.d/dnsmasq reload
 }
 
