@@ -1,0 +1,134 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2006-2011 OpenWrt.org
+
+START=99
+USE_PROCD=1
+
+PROG=/usr/bin/vlmcsd
+CONF=vlmcsd
+
+append_listen() {
+    echo $@ | xargs -rn1 >> $inifile echo Listen =
+}
+
+parse_iface() {
+    local ips
+    while [ -n "$1" ];do
+        if [ -z "$family" -o "$family" = "ipv4" ];then
+            ips=$(ifstatus $1 | jsonfilter -e '$["ipv4-address"][*]["address"]')
+            append_listen $ips
+        fi
+        if [ -z "$family" -o "$family" = "ipv6" ];then
+            ips=$(ifstatus $1 | jsonfilter -e '$["ipv6-prefix-assignment"][*]["local-address"]["address"]')
+            append_listen $ips
+        fi
+        shift
+    done
+}
+
+listen_all() {
+    if [ -z "$family" -o "$family" = "ipv4" ];then
+        append_listen '0.0.0.0'
+    fi
+    if [ -z "$family" -o "$family" = "ipv6" ];then
+        append_listen '[::]'
+    fi
+}
+
+start_service() {
+    config_load $CONF
+    config_get_bool value global enable
+    if [ "$value" = "0" ];then
+        return 0
+    fi
+
+    local hostname=$(uci -q get system.@system[0].hostname)
+    local domain=$(uci -q get dhcp.@dnsmasq[0].domain)
+    local target=$(uci -q get dhcp.vlmcsd.target)
+    local port=$(uci -q get dhcp.vlmcsd.port)
+    local inifile=/var/etc/vlmcsd.ini
+    local value op_port family
+
+    mkdir -p $(dirname $inifile)
+    
+    echo -n > $inifile
+    config_get family global family
+    config_get op_port vlmcsd Port
+    [ -n "$op_port" ] && echo "Port = $op_port" >> $inifile
+    
+    config_get value vlmcsd Listen
+    if [ -n "$value" ];then
+        append_listen $value
+    else
+        config_get value global Interface
+        [ -n "$value" ] && parse_iface $value || listen_all
+    fi
+    
+    config_get value vlmcsd PublicIPProtectionLevel
+    [ -n "$value" ] && echo "PublicIPProtectionLevel = $value" >> $inifile
+    config_get_bool value vlmcsd FreeBind
+    [ "$value" = "1" ] && echo "FreeBind = true" >> $inifile
+    config_get value vlmcsd RandomizationLevel
+    [ -n "$value" ] && echo "RandomizationLevel = $value" >> $inifile
+    config_get value vlmcsd HostBuild
+    [ -n "$value" ] && echo "HostBuild = $value" >> $inifile
+    config_get value vlmcsd LCID
+    [ -n "$value" ] && echo "LCID = $value" >> $inifile
+    config_get value vlmcsd MaxWorkers
+    [ -n "$value" ] && echo "MaxWorkers = $value" >> $inifile
+    config_get value vlmcsd ConnectionTimeout
+    [ -n "$value" ] && echo "ConnectionTimeout = $value" >> $inifile
+    config_get_bool value vlmcsd DisconnectClientsImmediately
+    [ "$value" = "1" ] && echo "DisconnectClientsImmediately = yes" >> $inifile
+    config_get value vlmcsd PidFile
+    [ -n "$value" ] && echo "PidFile = $value" >> $inifile
+    config_get value vlmcsd KmsData
+    [ -n "$value" ] && echo "KmsData = $value" >> $inifile
+    config_get value vlmcsd LogFile
+    [ -n "$value" ] && echo "LogFile = $value" >> $inifile
+    config_get_bool value vlmcsd LogDateAndTime
+    [ "$value" = "0" ] && echo "LogDateAndTime = false" >> $inifile
+    config_get_bool value vlmcsd LogVerbose
+    [ "$value" = "1" ] && echo "LogVerbose = true" >> $inifile
+    config_get value vlmcsd WhiteListingLevel
+    [ -n "$value" ] && echo "WhiteListingLevel = $value" >> $inifile
+    config_get_bool value vlmcsd CheckClientTime
+    [ "$value" = "1" ] && echo "CheckClientTime = true" >> $inifile
+    config_get_bool value vlmcsd MaintainClients
+    [ "$value" = "1" ] && echo "MaintainClients = true" >> $inifile
+    config_get_bool value vlmcsd StartEmpty
+    [ "$value" = "1" ] && echo "StartEmpty = true" >> $inifile
+    config_get value vlmcsd ActivationInterval
+    [ -n "$value" ] && echo "ActivationInterval = $value" >> $inifile
+    config_get value vlmcsd RenewalInterval
+    [ -n "$value" ] && echo "RenewalInterval = $value" >> $inifile
+    config_get value vlmcsd ExitLevel
+    [ -n "$value" ] && echo "ExitLevel = $value" >> $inifile
+    config_get value vlmcsd user
+    [ -n "$value" ] && echo "group = $value" >> $inifile
+    config_get value vlmcsd user
+    [ -n "$value" ] && echo "group = $value" >> $inifile
+    config_get_bool value vlmcsd UseNDR64
+    [ "$value" = "0" ] && echo "UseNDR64 = false" >> $inifile
+    config_get_bool value vlmcsd UseBTFN
+    [ "$value" = "0" ] && echo "UseBTFN = false" >> $inifile
+
+    procd_open_instance
+    procd_set_param command $PROG -D -i $inifile
+    procd_set_param file $inifile
+    procd_set_param respawn
+    procd_close_instance
+
+    op_port=${op_port:-1688}
+    [ "$hostname.$domain" = "$target" -a "$port" = "$op_port" ] && return 0
+
+    uci -q set dhcp.vlmcsd.srv="_vlmcs._tcp.$domain"
+    uci -q set dhcp.vlmcsd.target="$hostname.$domain"
+    uci -q set dhcp.vlmcsd.port="$op_port"
+    uci -q commit dhcp
+    /etc/init.d/dnsmasq reload
+}
+
+service_triggers() {
+	procd_add_reload_trigger "vlmcsd" "dhcp" "system"
+}
