@@ -38,11 +38,23 @@ define Package/vlmcsd/description
 	vlmcsd is a KMS Emulator in C.
 endef
 
+define Package/vlmcsd/postinst
+#!/bin/sh
+if [ -z "$${IPKG_INSTROOT}" ];then
+	if [ -f /etc/uci-defaults/openwrt-vlmcsd ];then
+		( . /etc/uci-defaults/openwrt-vlmcsd ) && \
+		rm -f /etc/uci-defaults/openwrt-vlmcsd
+	fi
+fi
+exit 0
+endef
+
 define Package/vlmcsd/postrm
 #!/bin/sh
 uci -q delete dhcp.vlmcsd
 uci -q commit dhcp
 /etc/init.d/dnsmasq reload
+exit 0
 endef
 
 define Package/vlmcsd/install
@@ -50,6 +62,8 @@ define Package/vlmcsd/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bin/vlmcs $(1)/usr/bin/vlmcs
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bin/vlmcsd $(1)/usr/bin/vlmcsd
 
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_CONF) ./files/vlmcsd.default $(1)/etc/uci-defaults/openwrt-vlmcsd
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./files/vlmcsd.conf $(1)/etc/config/vlmcsd
 	$(INSTALL_DIR) $(1)/etc/init.d

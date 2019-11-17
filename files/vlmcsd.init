@@ -123,7 +123,6 @@ start_service() {
     [ "$hostname.$domain" = "$target" -a "$port" = "$op_port" ] && return 0
 
     uci -q batch <<EOF
-        set dhcp.vlmcsd='srvhost'
         set dhcp.vlmcsd.srv="_vlmcs._tcp.$domain"
         set dhcp.vlmcsd.target="$hostname.$domain"
         set dhcp.vlmcsd.port="$op_port"

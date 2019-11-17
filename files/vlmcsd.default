@@ -1,0 +1,10 @@
+#!/bin/sh
+
+uci -q batch <<EOF
+    set dhcp.vlmcsd='srvhost'
+    set dhcp.vlmcsd.class="0"
+    set dhcp.vlmcsd.weight="100"
+    commit dhcp
+EOF
+
+exit 0
