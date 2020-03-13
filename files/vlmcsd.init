@@ -7,19 +7,22 @@ USE_PROCD=1
 PROG=/usr/bin/vlmcsd
 CONF=vlmcsd
 
+. /lib/functions/network.sh
+
 append_listen() {
     echo $@ | xargs -rn1 >> $inifile echo Listen =
 }
 
 parse_iface() {
     local ips
+
     while [ -n "$1" ];do
         if [ -z "$family" -o "$family" = "ipv4" ];then
-            ips=$(ifstatus $1 | jsonfilter -e '$["ipv4-address"][*]["address"]')
+            network_get_ipaddrs ips "$1"
             append_listen $ips
         fi
         if [ -z "$family" -o "$family" = "ipv6" ];then
-            ips=$(ifstatus $1 | jsonfilter -e '$["ipv6-prefix-assignment"][*]["local-address"]["address"]')
+            network_get_ipaddrs6 ips "$1"
             append_listen $ips
         fi
         shift
@@ -35,26 +38,89 @@ listen_all() {
     fi
 }
 
+remove_srvhost() {
+    local section=$1
+    [ "${section%%_*}" = "vlmcsd" ] && uci_remove dhcp "$section"
+}
+
+add_srvhost() {
+    local host="$1" port="$2" section="vlmcsd_$3"
+
+    uci -q batch <<EOF
+        set dhcp.$section='srvhost'
+        set dhcp.$section.class='0'
+        set dhcp.$section.weight='0'
+        set dhcp.$section.srv="_vlmcs._tcp"
+        set dhcp.$section.target="$host"
+        set dhcp.$section.port="$port"
+EOF
+}
+
+dnsmasq_reload() {
+    local port listen ifaces
+    local hostname=$(uci -q get system.@system[0].hostname)
+    local seq=1
+
+    config_get port vlmcsd Port
+    config_get listen vlmcsd Listen
+    config_get ifaces global Interface
+
+    config_load dhcp
+    config_foreach remove_srvhost srvhost
+    port=${port:-1688}
+
+    local iface ips ip
+    if [ -n "$listen" ];then
+        add_srvhost "$hostname" "$port" "$seq"
+    elif [ -z "$ifaces" ];then
+        if [ -z "$family" ];then
+            add_srvhost "$hostname" "$port" "$seq"
+        else
+            local ip_pattern='\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+
+            ips=$(nslookup $hostname 2>/dev/null | sed -rn 's/^Address \d+: (.*)$/\1/p')
+            for ip in $ips;do
+                [ "$family" = "ipv4" ] && \
+                    ip=$(echo $ip | sed -rn "s/^(${ip_pattern})$/\1/p") || \
+                    ip=$(echo $ip | sed -r "/^${ip_pattern}$/d")
+                [ -z "$ip" ] && continue
+                add_srvhost "$ip" "$port" "$seq"
+                seq=$(($seq + 1))
+            done
+        fi
+    else
+        local ip4 ip6
+        for iface in $ifaces;do
+            [ -z "$family" -o "$family" = "ipv4" ] && \
+                network_get_ipaddrs ip4 "$iface"
+            [ -z "$family" -o "$family" = "ipv6" ] && \
+                network_get_ipaddrs6 ip6 "$iface"
+
+            for ip in $ip4 $ip6;do
+                add_srvhost "$ip" "$port" "$seq"
+                seq=$(($seq + 1))
+            done
+        done
+    fi
+    uci_commit dhcp
+
+    /etc/init.d/dnsmasq reload
+}
+
 start_service() {
+    local inifile=/var/etc/vlmcsd.ini
+    local value family
+
     config_load $CONF
     config_get_bool value global enable
-    if [ "$value" = "0" ];then
-        return 0
-    fi
-
-    local hostname=$(uci -q get system.@system[0].hostname)
-    local domain=$(uci -q get dhcp.@dnsmasq[0].domain)
-    local target=$(uci -q get dhcp.vlmcsd.target)
-    local port=$(uci -q get dhcp.vlmcsd.port)
-    local inifile=/var/etc/vlmcsd.ini
-    local value op_port family
+    [ "$value" = "0" ] && return 0
 
     mkdir -p $(dirname $inifile)
     
     echo -n > $inifile
     config_get family global family
-    config_get op_port vlmcsd Port
-    [ -n "$op_port" ] && echo "Port = $op_port" >> $inifile
+    config_get value vlmcsd Port
+    [ -n "$value" ] && echo "Port = $value" >> $inifile
     
     config_get value vlmcsd Listen
     if [ -n "$value" ];then
@@ -119,16 +185,7 @@ start_service() {
     procd_set_param respawn
     procd_close_instance
 
-    op_port=${op_port:-1688}
-    [ "$hostname.$domain" = "$target" -a "$port" = "$op_port" ] && return 0
-
-    uci -q batch <<EOF
-        set dhcp.vlmcsd.srv="_vlmcs._tcp.$domain"
-        set dhcp.vlmcsd.target="$hostname.$domain"
-        set dhcp.vlmcsd.port="$op_port"
-        commit dhcp
-EOF
-    /etc/init.d/dnsmasq reload
+    dnsmasq_reload
 }
 
 service_triggers() {
